@@ -9,9 +9,7 @@ export default function DefaultLayout({ children }: DefaultLayoutProps) {
     <div className="relative flex flex-col h-screen">
       <Navbar />
 
-      <main className="container mx-auto max-w-7xl px-6 flex-grow pt-16">
-        {children}
-      </main>
+      <main className="container pt-6 mx-auto">{children}</main>
     </div>
   );
 }

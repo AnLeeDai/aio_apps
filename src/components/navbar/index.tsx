@@ -9,18 +9,27 @@ import { ThemeSwitch } from "@/components/theme-switch";
 
 export default function App() {
   return (
-    <Navbar isBordered>
+    <Navbar
+      isBordered
+      className="container mx-auto"
+      classNames={{
+        wrapper: "p-0",
+      }}
+      maxWidth="full"
+    >
       <NavbarBrand>
         <Logo />
       </NavbarBrand>
 
-      <Input
-        isClearable
-        className="w-full"
-        placeholder="Gõ để tìm kiếm..."
-        radius="lg"
-        startContent={<IconSearch />}
-      />
+      <NavbarContent>
+        <Input
+          isClearable
+          className="w-full"
+          placeholder="Gõ để tìm kiếm..."
+          radius="lg"
+          startContent={<IconSearch />}
+        />
+      </NavbarContent>
 
       <NavbarContent justify="end">
         <NavbarItem>
