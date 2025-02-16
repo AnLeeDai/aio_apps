@@ -1,4 +1,4 @@
-import { useState, useRef, SetStateAction } from "react";
+import { useState, useRef, useEffect, SetStateAction } from "react";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
 
@@ -13,27 +13,37 @@ export default function VideoCompress() {
   const [compressionQuality, setCompressionQuality] = useState("Medium");
   const [estimatedTime, setEstimatedTime] = useState(0);
   const [processingTime, setProcessingTime] = useState(0);
+  const [progress, setProgress] = useState(0);
   const [fileSize, setFileSize] = useState(0);
   const [compressedSize, setCompressedSize] = useState(0);
   const [compressionRatio, setCompressionRatio] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+
   const ffmpegRef = useRef(new FFmpeg());
   const originalFile = useRef<File | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadFFmpeg = async () => {
-    const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm";
-    const ffmpeg = ffmpegRef.current;
+  useEffect(() => {
+    const loadFFmpeg = async () => {
+      const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm";
+      const ffmpeg = ffmpegRef.current;
 
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
-      wasmURL: await toBlobURL(
-        `${baseURL}/ffmpeg-core.wasm`,
-        "application/wasm",
-      ),
-    });
-    setLoaded(true);
-  };
+      await ffmpeg.load({
+        coreURL: await toBlobURL(
+          `${baseURL}/ffmpeg-core.js`,
+          "text/javascript",
+        ),
+        wasmURL: await toBlobURL(
+          `${baseURL}/ffmpeg-core.wasm`,
+          "application/wasm",
+        ),
+      });
+
+      setLoaded(true);
+    };
+
+    loadFFmpeg();
+  }, []); // Chạy một lần khi component mount
 
   const handleVideoUpload = async (
     event: React.ChangeEvent<HTMLInputElement>,
@@ -49,6 +59,7 @@ export default function VideoCompress() {
     setProcessingTime(0);
     setCompressedSize(0);
     setCompressionRatio(0);
+    setProgress(0);
   };
 
   const handleQualityChange = (quality: SetStateAction<string>) => {
@@ -60,29 +71,28 @@ export default function VideoCompress() {
     switch (quality) {
       case "High":
         newCRF = 18;
-        compressionFactor = 0.9; // Giữ 90% dung lượng gốc
+        compressionFactor = 0.9;
         break;
       case "Medium":
         newCRF = 26;
-        compressionFactor = 0.6; // Giữ 60% dung lượng gốc
+        compressionFactor = 0.6;
         break;
       case "Low":
         newCRF = 35;
-        compressionFactor = 0.3; // Giữ 30% dung lượng gốc
+        compressionFactor = 0.3;
         break;
       default:
         return;
     }
 
     setCompressionLevel(newCRF);
-
-    // Dự đoán dung lượng sau khi nén
-    const estimatedSize = fileSize * compressionFactor;
-
-    setCompressedSize(parseFloat(estimatedSize.toFixed(2)));
+    setCompressedSize(parseFloat((fileSize * compressionFactor).toFixed(2)));
 
     // Dự đoán thời gian nén
-    const estimatedTimeSec = Math.max(5, (fileSize / estimatedSize) * 5);
+    const estimatedTimeSec = Math.max(
+      5,
+      (fileSize / (fileSize * compressionFactor)) * 5,
+    );
 
     setEstimatedTime(parseFloat(estimatedTimeSec.toFixed(1)));
   };
@@ -101,14 +111,27 @@ export default function VideoCompress() {
 
     setIsProcessing(true);
     setProcessingTime(0);
+    setProgress(0);
 
     let startTime = Date.now();
 
+    // Cập nhật thời gian thực khi nén video
     intervalRef.current = setInterval(() => {
       setProcessingTime(
         parseFloat(((Date.now() - startTime) / 1000).toFixed(1)),
       );
     }, 1000);
+
+    // Lắng nghe tiến trình từ FFmpeg
+    ffmpeg.on("progress", ({ progress }) => {
+      setProgress(Math.floor(progress * 100));
+
+      // Dự đoán thời gian còn lại
+      const elapsed = (Date.now() - startTime) / 1000;
+      const estimatedTotal = (elapsed / progress) * (1 - progress);
+
+      setEstimatedTime(parseFloat(estimatedTotal.toFixed(1)));
+    });
 
     await ffmpeg.exec([
       "-i",
@@ -125,16 +148,12 @@ export default function VideoCompress() {
 
     const data = await ffmpeg.readFile(outputFileName);
     const blob = new Blob([data], { type: `video/${outputFormat}` });
-
     const newSize = blob.size / (1024 * 1024);
 
     setCompressedSize(parseFloat(newSize.toFixed(2)));
-
-    if (fileSize > 0) {
-      const reductionPercent = ((fileSize - newSize) / fileSize) * 100;
-
-      setCompressionRatio(parseFloat(reductionPercent.toFixed(2)));
-    }
+    setCompressionRatio(
+      parseFloat((((fileSize - newSize) / fileSize) * 100).toFixed(2)),
+    );
 
     setCompressedVideo(URL.createObjectURL(blob));
     setProcessingTime(parseFloat(((Date.now() - startTime) / 1000).toFixed(1)));
@@ -144,14 +163,7 @@ export default function VideoCompress() {
   return (
     <DefaultLayout>
       <div className="p-4">
-        {!loaded ? (
-          <button
-            className="p-2 bg-blue-500 text-white rounded"
-            onClick={loadFFmpeg}
-          >
-            Load FFmpeg (~31 MB)
-          </button>
-        ) : (
+        {loaded && (
           <>
             <input accept="video/*" type="file" onChange={handleVideoUpload} />
             <select
@@ -170,11 +182,7 @@ export default function VideoCompress() {
                 {["High", "Medium", "Low"].map((quality) => (
                   <button
                     key={quality}
-                    className={`p-2 rounded ${
-                      compressionQuality === quality
-                        ? "bg-blue-500 text-white"
-                        : "bg-gray-200"
-                    }`}
+                    className={`p-2 rounded ${compressionQuality === quality ? "bg-blue-500 text-white" : "bg-gray-200"}`}
                     onClick={() => handleQualityChange(quality)}
                   >
                     {quality}
@@ -188,8 +196,18 @@ export default function VideoCompress() {
               disabled={isProcessing}
               onClick={handleCompression}
             >
-              {isProcessing ? "Compressing..." : "Start Compression"}
+              {isProcessing
+                ? `Compressing... ${progress}%`
+                : "Start Compression"}
             </button>
+
+            <div className="mt-2">
+              {isProcessing && (
+                <p>
+                  Progress: {progress}% | Estimated Time: {estimatedTime}s
+                </p>
+              )}
+            </div>
 
             <div className="grid grid-cols-2 gap-4 mt-4">
               <div>
